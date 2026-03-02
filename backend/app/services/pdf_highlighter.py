@@ -246,10 +246,11 @@ class PDFHighlighter:
                         logger.info(f"✓ '{codigo}' encontrado via búsqueda nativa (rect: {rect})")
                         break
                 
-                # ESTRATEGIA 2: Si no encontró con búsqueda nativa, usar OCR
+                # ESTRATEGIA 2: Si no encontró con búsqueda nativa, usar OCR palabra por palabra
                 if rect is None:
                     for palabra in palabras_ocr:
-                        palabra_clean = palabra['texto'].upper().replace('-', '').replace(' ', '')
+                        # Limpiar: quitar TODOS los caracteres no alfanuméricos
+                        palabra_clean = re.sub(r'[^A-Z0-9]', '', palabra['texto'].upper())
                         
                         # Matching exacto o difuso
                         if palabra_clean == codigo_clean or self._codigos_similares(codigo_clean, palabra_clean):
@@ -267,10 +268,7 @@ class PDFHighlighter:
                             if h > 9:  # Si el rectángulo es muy alto (>9px)
                                 # Reducir altura al ideal
                                 h_ajustado = altura_ideal
-                                # Posicionar Y: ajuste proporcional a la diferencia de altura
-                                # Para h=11.5 necesita bajar poco, para h=16 necesita subir
                                 diferencia = h - altura_ideal
-                                # Factor de ajuste: 0.3 del exceso se usa para posicionar
                                 offset = diferencia * 0.3
                                 y_ajustado = y - altura_ideal - offset
                             else:
@@ -283,6 +281,47 @@ class PDFHighlighter:
                             fuente = "OCR"
                             logger.info(f"✓ '{codigo}' encontrado como '{texto_encontrado}' via OCR (rect: {rect}, h_orig={h:.1f}, h_adj={h_ajustado:.1f})")
                             break
+                
+                # ESTRATEGIA 3: Búsqueda avanzada OCR (combina palabras consecutivas, fuzzy, prefijo+número)
+                if rect is None and palabras_ocr:
+                    rect = self._buscar_coordenadas_ocr(codigo, palabras_ocr, pagina)
+                    if rect is not None:
+                        texto_encontrado = codigo
+                        fuente = "OCR-avanzado"
+                        logger.info(f"✓ '{codigo}' encontrado via búsqueda OCR avanzada (rect: {rect})")
+                
+                # ESTRATEGIA 4: EasyOCR (deep learning, más preciso para escaneados)
+                if rect is None and EASYOCR_AVAILABLE:
+                    try:
+                        easyocr_svc = get_easyocr_service()
+                        rect = self._buscar_codigo_easyocr(pagina, codigo, service=easyocr_svc)
+                        if rect is not None:
+                            texto_encontrado = codigo
+                            fuente = "EasyOCR"
+                            logger.info(f"✓ '{codigo}' encontrado via EasyOCR (rect: {rect})")
+                    except Exception as e:
+                        logger.warning(f"Error en EasyOCR para '{codigo}': {e}")
+                
+                # ESTRATEGIA 5: Fallback pytesseract OCR directo (si OCRmyPDF no dio resultados)
+                if rect is None and not palabras_ocr:
+                    rect = self._buscar_codigo_legacy(pagina, codigo, pagina_num)
+                    if rect is not None:
+                        texto_encontrado = codigo
+                        fuente = "legacy-OCR"
+                        logger.info(f"✓ '{codigo}' encontrado via legacy OCR (rect: {rect})")
+                
+                # Log de diagnóstico si no se encontró
+                if rect is None:
+                    # Mostrar las palabras OCR que contienen parte del código para depuración
+                    codigo_prefix = codigo_clean[:2] if len(codigo_clean) >= 2 else codigo_clean
+                    palabras_similares = [
+                        p['texto'] for p in palabras_ocr
+                        if codigo_prefix in re.sub(r'[^A-Z0-9]', '', p['texto'].upper())
+                    ][:10]
+                    logger.warning(
+                        f"✗ '{codigo}' NO encontrado en página {pagina_num + 1}. "
+                        f"Palabras OCR con prefijo '{codigo_prefix}': {palabras_similares}"
+                    )
                 
                 # Si encontró, resaltar
                 if rect is not None and rect.width > 0 and rect.height > 0:
@@ -741,8 +780,8 @@ class PDFHighlighter:
             return True
         
         # Búsqueda sin separadores
-        codigo_limpio = re.sub(r'[\s\-_./]', '', codigo_upper)
-        texto_limpio = re.sub(r'[\s\-_./]', '', texto_upper)
+        codigo_limpio = re.sub(r'[^A-Z0-9]', '', codigo_upper)
+        texto_limpio = re.sub(r'[^A-Z0-9]', '', texto_upper)
         if codigo_limpio in texto_limpio:
             logger.debug(f"Código {codigo} encontrado sin separadores")
             return True
@@ -915,12 +954,12 @@ class PDFHighlighter:
             return None
         
         codigo_upper = codigo.upper()
-        codigo_limpio = re.sub(r'[\s\-_./]', '', codigo_upper)
+        codigo_limpio = re.sub(r'[^A-Z0-9]', '', codigo_upper)
         
         # ESTRATEGIA 1: Buscar coincidencia EXACTA primero (máxima prioridad)
         for palabra in palabras_ocr:
             texto_palabra = palabra['texto'].upper()
-            texto_limpio = re.sub(r'[\s\-_./]', '', texto_palabra)
+            texto_limpio = re.sub(r'[^A-Z0-9]', '', texto_palabra)
             
             # Coincidencia exacta
             if codigo_upper in texto_palabra or codigo_limpio in texto_limpio:
@@ -937,7 +976,7 @@ class PDFHighlighter:
         # Esto es importante porque OCR puede separar "SM-056" en "SM" y "056"
         for i, palabra in enumerate(palabras_ocr):
             texto_combinado = palabra['texto'].upper()
-            texto_combinado_limpio = re.sub(r'[\s\-_./]', '', texto_combinado)
+            texto_combinado_limpio = re.sub(r'[^A-Z0-9]', '', texto_combinado)
             
             # Combinar con palabras siguientes en la misma línea
             x_min = palabra['x']
@@ -950,7 +989,7 @@ class PDFHighlighter:
                 # Solo si está en la misma línea (similar Y) y cerca horizontalmente
                 if abs(siguiente['y'] - y_min) < 15 and (siguiente['x'] - x_max) < 50:
                     texto_combinado += siguiente['texto'].upper()
-                    texto_combinado_limpio += re.sub(r'[\s\-_./]', '', siguiente['texto'].upper())
+                    texto_combinado_limpio += re.sub(r'[^A-Z0-9]', '', siguiente['texto'].upper())
                     x_max = siguiente['x'] + siguiente['w']
                     y_max = max(y_max, siguiente['y'] + siguiente['h'])
                     
@@ -969,7 +1008,7 @@ class PDFHighlighter:
         
         for palabra in palabras_ocr:
             texto_palabra = palabra['texto'].upper()
-            texto_limpio = re.sub(r'[\s\-_./]', '', texto_palabra)
+            texto_limpio = re.sub(r'[^A-Z0-9]', '', texto_palabra)
             
             # Solo considerar palabras de longitud similar
             if abs(len(texto_limpio) - len(codigo_limpio)) <= 2:
@@ -1017,7 +1056,7 @@ class PDFHighlighter:
                             y_max = max(y_max, siguiente['y'] + siguiente['h'])
                     
                     # Verificar que el área contenga tanto el prefijo como el sufijo
-                    texto_area_limpio = re.sub(r'[\s\-_./]', '', texto_area.upper())
+                    texto_area_limpio = re.sub(r'[^A-Z0-9]', '', texto_area.upper())
                     if prefijo in texto_area_limpio and sufijo in texto_area_limpio:
                         rect = fitz.Rect(x_min - 2, y_min - 2, x_max + 2, y_max + 2)
                         logger.debug(f"Coordenadas OCR (prefijo+sufijo) para {codigo}: {rect}")
