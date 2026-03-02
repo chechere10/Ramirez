@@ -188,6 +188,27 @@ class PDFHighlighter:
                 ocr_result = process_pdf_with_ocr(pdf_bytes, force_ocr=False)
                 logger.info(f"OCR completado: {ocr_result.total_words} palabras en {ocr_result.processing_time_ms:.0f}ms")
                 
+                # Si el caché devolvió 0 palabras, forzar re-OCR (caché corrupto)
+                if ocr_result.total_words == 0:
+                    logger.warning("OCR devolvió 0 palabras — posible caché corrupto. Forzando re-OCR...")
+                    try:
+                        # Limpiar caché para este PDF
+                        ocr_svc = get_ocr_service()
+                        if ocr_svc.cache:
+                            pdf_hash = ocr_svc.cache._calculate_hash(pdf_bytes)
+                            cached_path = ocr_svc.cache.cache_dir / f"{pdf_hash}.pdf"
+                            if cached_path.exists():
+                                cached_path.unlink()
+                            if pdf_hash in ocr_svc.cache.metadata:
+                                del ocr_svc.cache.metadata[pdf_hash]
+                                ocr_svc.cache._save_metadata()
+                            logger.info(f"Caché eliminado para PDF {pdf_hash[:16]}...")
+                        
+                        ocr_result = process_pdf_with_ocr(pdf_bytes, force_ocr=True)
+                        logger.info(f"Re-OCR completado: {ocr_result.total_words} palabras en {ocr_result.processing_time_ms:.0f}ms")
+                    except Exception as e2:
+                        logger.warning(f"Error en re-OCR forzado: {e2}")
+                
                 # Extraer palabras por página
                 for page_result in ocr_result.pages:
                     palabras_por_pagina[page_result.page_number - 1] = [
