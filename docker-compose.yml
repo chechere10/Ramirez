@@ -1,0 +1,183 @@
+# ============================================
+# ManifestoCross - Docker Compose
+# Servicios: PostgreSQL, ElasticSearch, MinIO, Redis, Backend, Frontend
+# ============================================
+# 
+# Uso:
+#   Solo servicios de infraestructura: docker compose up -d
+#   Stack completo (dev):              docker compose --profile dev up -d
+#   Stack completo (prod):             docker compose --profile prod up -d
+# ============================================
+
+services:
+  # PostgreSQL - Base de datos principal
+  postgres:
+    image: postgres:16-alpine
+    container_name: manifestocross-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: manifestocross
+    ports:
+      - "5435:5432"  # Puerto alternativo para evitar conflictos
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ElasticSearch - Motor de búsqueda
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    container_name: manifestocross-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9201:9200"  # Puerto alternativo
+      - "9301:9300"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # MinIO - Almacenamiento de objetos (S3 compatible)
+  minio:
+    image: minio/minio:latest
+    container_name: manifestocross-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9002"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9020:9000"  # API
+      - "9021:9002"  # Consola web
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Redis - Cache y broker de colas
+  redis:
+    image: redis:7-alpine
+    container_name: manifestocross-redis
+    restart: unless-stopped
+    ports:
+      - "6382:6379"  # Puerto alternativo
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # Backend - FastAPI (Perfil: dev/prod)
+  # ============================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: manifestocross-backend
+    restart: unless-stopped
+    profiles: ["dev", "prod"]
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/manifestocross
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    ports:
+      - "8005:8005"
+    volumes:
+      - ./backend:/app
+      - backend_storage:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================
+  # Frontend - React/Vite (Perfil: dev)
+  # ============================================
+  frontend-dev:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: manifestocross-frontend-dev
+    restart: unless-stopped
+    profiles: ["dev"]
+    environment:
+      - VITE_API_URL=http://100.71.152.76:8005
+    ports:
+      - "3005:3005"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+
+  # ============================================
+  # Frontend - Nginx (Perfil: prod)
+  # ============================================
+  frontend-prod:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+      args:
+        - VITE_API_URL=/api
+        - VITE_APP_NAME=ManifestoCross
+    container_name: manifestocross-frontend-prod
+    restart: unless-stopped
+    profiles: ["prod"]
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:
+    name: manifestocross_postgres_data
+  elasticsearch_data:
+    name: manifestocross_elasticsearch_data
+  minio_data:
+    name: manifestocross_minio_data
+  redis_data:
+    name: manifestocross_redis_data
+  backend_storage:
+    name: manifestocross_backend_storage
+
+networks:
+  default:
+    name: manifestocross_network

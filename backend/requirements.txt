@@ -1,0 +1,83 @@
+# ============================================
+# ManifestoCross - Backend Dependencies
+# ============================================
+
+# Core Framework
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+python-multipart==0.0.9
+
+# Database
+sqlalchemy==2.0.25
+alembic==1.13.1
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
+
+# Validation & Serialization
+pydantic==2.6.1
+pydantic-settings==2.1.0
+email-validator==2.1.0
+
+# PDF Processing
+pymupdf==1.23.21
+pytesseract==0.3.10
+pdf2image==1.16.3
+Pillow==10.2.0
+
+# OCR Avanzado - Deep Learning para alta precisión
+easyocr==1.7.2
+# Dependencias de PyTorch para EasyOCR (CPU por defecto)
+torch>=1.7.1
+torchvision>=0.8.2
+
+# OCR Legacy - Fallback con Tesseract
+ocrmypdf==16.0.0
+pikepdf==8.15.1
+
+# PDF Annotation
+pypdf==4.0.1
+reportlab==4.0.9
+
+# Search Engine
+elasticsearch==8.12.0
+
+# Storage
+minio==7.2.3
+python-magic==0.4.27
+
+# Background Tasks
+celery==5.3.6
+redis==5.0.1
+
+# Excel/CSV Processing
+openpyxl==3.1.2
+pandas==2.2.0
+
+# Authentication & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# HTTP Client
+httpx==0.26.0
+aiohttp==3.9.3
+
+# Environment & Config
+python-dotenv==1.0.1
+
+# Logging
+loguru==0.7.2
+
+# Development & Testing
+pytest==8.0.0
+pytest-asyncio==0.23.5
+pytest-cov==4.1.0
+httpx==0.26.0
+
+# Linting & Formatting
+flake8==7.0.0
+black==24.1.1
+isort==5.13.2
+mypy==1.8.0
+
+# Pre-commit
+pre-commit==3.6.0

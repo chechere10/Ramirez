@@ -1,0 +1,1 @@
+"""ManifestoCross Backend Application."""
